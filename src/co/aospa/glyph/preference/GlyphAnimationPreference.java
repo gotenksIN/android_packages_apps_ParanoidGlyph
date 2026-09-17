@@ -372,8 +372,8 @@ public class GlyphAnimationPreference extends Preference {
             imageView.setAlpha(0.3f);
         } else {
             float brightnessFactor = (float) (0.4 + 0.6
-                    * (brightness / (double) Constants.getMaxBrightness()));
-            imageView.setAlpha(brightnessFactor);
+                    * (brightness / (double) AnimationUtils.MAX_SAMPLE_BRIGHTNESS));
+            imageView.setAlpha(Math.max(0f, Math.min(1f, brightnessFactor)));
         }
     }
 }
