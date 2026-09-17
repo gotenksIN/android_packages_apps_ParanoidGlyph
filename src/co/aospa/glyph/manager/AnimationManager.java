@@ -38,7 +38,13 @@ public final class AnimationManager {
 
     private static Future<?> submit(Runnable runnable) {
         ExecutorService executorService = Executors.newSingleThreadExecutor();
-        return executorService.submit(runnable);
+        return executorService.submit(() -> {
+            try {
+                runnable.run();
+            } finally {
+                executorService.shutdown();
+            }
+        });
     }
 
     private static boolean check(String name, boolean wait) {
