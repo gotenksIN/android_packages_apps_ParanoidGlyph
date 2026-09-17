@@ -18,15 +18,12 @@ package co.aospa.glyph.manager;
 
 import android.util.Log;
 
-import com.android.internal.util.ArrayUtils;
-
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.util.Arrays;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import co.aospa.glyph.utils.AnimationUtils;
 import co.aospa.glyph.utils.Constants;
 import co.aospa.glyph.utils.FileUtils;
 import co.aospa.glyph.utils.ResourceUtils;
@@ -45,6 +42,16 @@ public final class AnimationManager {
                 executorService.shutdown();
             }
         });
+    }
+
+    // Polling callers re-check their own state after each short slice.
+    private static boolean sleepSlice() {
+        try {
+            Thread.sleep(50);
+            return true;
+        } catch (InterruptedException e) {
+            return false;
+        }
     }
 
     private static boolean check(String name, boolean wait) {
@@ -67,9 +74,7 @@ public final class AnimationManager {
                 StatusManager.setVolumeLedUpdate(true);
                 while (StatusManager.isVolumeLedUpdate()) {
                     if (System.currentTimeMillis() - start >= 2500) return false;
-                    try {
-                        Thread.sleep(50);
-                    } catch (InterruptedException e) {
+                    if (!sleepSlice()) {
                         Thread.currentThread().interrupt();
                         return false;
                     }
@@ -78,9 +83,7 @@ public final class AnimationManager {
                 if (DEBUG) Log.d(TAG, "There is already an animation playing, wait | name: " + name);
                 while (StatusManager.isAnimationActive()) {
                     if (System.currentTimeMillis() - start >= 2500) return false;
-                    try {
-                        Thread.sleep(50);
-                    } catch (InterruptedException e) {
+                    if (!sleepSlice()) {
                         Thread.currentThread().interrupt();
                         return false;
                     }
@@ -117,24 +120,17 @@ public final class AnimationManager {
 
             long start = System.currentTimeMillis();
 
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                    ResourceUtils.getAnimation(name)))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
+            try {
+                AnimationUtils.Animation animation = AnimationUtils.load(
+                        name, AnimationUtils.Category.ANIMATION).join();
+                if (animation == null) return;
+                for (int i = 0; i < animation.getFrameCount(); i++) {
                     if (checkInterruption("csv")) throw new InterruptedException();
-                    line = line.replace(" ", "");
-                    line = line.endsWith(",") ? line.substring(0, line.length() - 1) : line;
-                    String[] pattern = line.split(",");
-                    if (ArrayUtils.contains(Constants.getSupportedAnimationPatternLengths(), pattern.length)) {
-                        updateLedFrame(pattern);
-                    } else {
-                        if (DEBUG) Log.d(TAG, "Animation line length mismatch | name: " + name + " | line: " + line);
-                        throw new InterruptedException();
-                    }
+                    updateLedFrame(animation.getFrame(i));
                     long delay = 16666L - (System.currentTimeMillis() - start);
                     Thread.sleep(delay/1000);
                 }
-            } catch (Exception e) {
+            } catch (InterruptedException e) {
                 if (DEBUG) Log.d(TAG, "Exception while playing animation | name: " + name + " | exception: " + e);
             } finally {
                 updateLedFrame(new float[5]);
@@ -172,7 +168,7 @@ public final class AnimationManager {
                 long start = System.currentTimeMillis();
                 while (System.currentTimeMillis() - start <= 2000) {
                     if (checkInterruption("charging")) throw new InterruptedException();
-                    Thread.sleep(50);
+                    if (!sleepSlice()) throw new InterruptedException();
                 }
                 for (int i = amount - 1; i >= 0; i--) {
                     if (checkInterruption("charging")) throw new InterruptedException();
@@ -183,7 +179,7 @@ public final class AnimationManager {
                 long start2 = System.currentTimeMillis();
                 while (System.currentTimeMillis() - start2 <= 730) {
                     if (checkInterruption("charging")) throw new InterruptedException();
-                    Thread.sleep(50);
+                    if (!sleepSlice()) throw new InterruptedException();
                 }
             } catch (InterruptedException e) {
                 if (DEBUG) Log.d(TAG, "Exception while playing animation, interrupted | name: charging");
@@ -233,7 +229,7 @@ public final class AnimationManager {
                 long start = System.currentTimeMillis();
                 while (System.currentTimeMillis() - start <= 1800) {
                     if (checkInterruption("volume")) throw new InterruptedException();
-                    Thread.sleep(50);
+                    if (!sleepSlice()) throw new InterruptedException();
                 }
                 for (int i = volumeArray.length - 1; i >= 0; i--) {
                     if (checkInterruption("volume")) throw new InterruptedException();
@@ -247,7 +243,7 @@ public final class AnimationManager {
                 long start2 = System.currentTimeMillis();
                 while (System.currentTimeMillis() - start2 <= 730) {
                     if (checkInterruption("volume")) throw new InterruptedException();
-                    Thread.sleep(50);
+                    if (!sleepSlice()) throw new InterruptedException();
                 }
             } catch (InterruptedException e) {
                 if (DEBUG) Log.d(TAG, "Exception while playing animation, interrupted | name: volume");
@@ -275,36 +271,38 @@ public final class AnimationManager {
 
             StatusManager.setCallLedActive(true);
 
+            AnimationUtils.Animation animation;
+            try {
+                animation = AnimationUtils.load(name, AnimationUtils.Category.CALL).join();
+            } catch (CompletionException e) {
+                StatusManager.setCallLedEnabled(false);
+                StatusManager.setCallLedActive(false);
+                throw e;
+            }
+            if (animation == null) {
+                StatusManager.setCallLedEnabled(false);
+                StatusManager.setCallLedActive(false);
+                return;
+            }
+
             long start = System.currentTimeMillis();
 
             while (StatusManager.isCallLedEnabled()) {
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                        ResourceUtils.getCallAnimation(name)))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
+                try {
+                    for (int i = 0; i < animation.getFrameCount(); i++) {
                         if (checkInterruption("call")) throw new InterruptedException();
-                        line = line.replace(" ", "");
-                        line = line.endsWith(",") ? line.substring(0, line.length() - 1) : line;
-                        String[] pattern = line.split(",");
-                        if (ArrayUtils.contains(Constants.getSupportedAnimationPatternLengths(), pattern.length)) {
-                            updateLedFrame(pattern);
-                        } else {
-                            if (DEBUG) Log.d(TAG, "Animation line length mismatch | name: " + name + " | line: " + line);
-                            throw new InterruptedException();
-                        }
+                        updateLedFrame(animation.getFrame(i));
                         long delay = 16666L - (System.currentTimeMillis() - start);
                         Thread.sleep(delay/1000);
                     }
-                } catch (Exception e) {
+                } catch (InterruptedException e) {
                     if (DEBUG) Log.d(TAG, "Exception while playing animation | name: " + name + " | exception: " + e);
                 } finally {
                     if (StatusManager.isAllLedActive()) {
                         if (DEBUG) Log.d(TAG, "All LED active, pause playing animation | name: " + name);
                         while (StatusManager.isAllLedActive()
                                 && StatusManager.isCallLedEnabled()) {
-                            try {
-                                Thread.sleep(50);
-                            } catch (InterruptedException e) {
+                            if (!sleepSlice()) {
                                 Thread.currentThread().interrupt();
                                 break;
                             }
@@ -402,12 +400,6 @@ public final class AnimationManager {
                 if (DEBUG) Log.d(TAG, "Done playing animation | name: " + name);
             }
         });
-    }
-
-    private static void updateLedFrame(String[] pattern) {
-        updateLedFrame(Arrays.stream(pattern)
-                .mapToInt(Integer::parseInt)
-                .toArray());
     }
 
     public static void updateLedFrame(int[] pattern) {
