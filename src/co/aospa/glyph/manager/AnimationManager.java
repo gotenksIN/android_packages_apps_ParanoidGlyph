@@ -61,11 +61,23 @@ public final class AnimationManager {
                 StatusManager.setVolumeLedUpdate(true);
                 while (StatusManager.isVolumeLedUpdate()) {
                     if (System.currentTimeMillis() - start >= 2500) return false;
+                    try {
+                        Thread.sleep(50);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return false;
+                    }
                 }
             } else if (wait) {
                 if (DEBUG) Log.d(TAG, "There is already an animation playing, wait | name: " + name);
                 while (StatusManager.isAnimationActive()) {
                     if (System.currentTimeMillis() - start >= 2500) return false;
+                    try {
+                        Thread.sleep(50);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return false;
+                    }
                 }
             } else {
                 if (DEBUG) Log.d(TAG, "There is already an animation playing, exiting | name: " + name);
@@ -154,6 +166,7 @@ public final class AnimationManager {
                 long start = System.currentTimeMillis();
                 while (System.currentTimeMillis() - start <= 2000) {
                     if (checkInterruption("charging")) throw new InterruptedException();
+                    Thread.sleep(50);
                 }
                 for (int i = amount - 1; i >= 0; i--) {
                     if (checkInterruption("charging")) throw new InterruptedException();
@@ -164,6 +177,7 @@ public final class AnimationManager {
                 long start2 = System.currentTimeMillis();
                 while (System.currentTimeMillis() - start2 <= 730) {
                     if (checkInterruption("charging")) throw new InterruptedException();
+                    Thread.sleep(50);
                 }
             } catch (InterruptedException e) {
                 if (DEBUG) Log.d(TAG, "Exception while playing animation, interrupted | name: charging");
@@ -213,6 +227,7 @@ public final class AnimationManager {
                 long start = System.currentTimeMillis();
                 while (System.currentTimeMillis() - start <= 1800) {
                     if (checkInterruption("volume")) throw new InterruptedException();
+                    Thread.sleep(50);
                 }
                 for (int i = volumeArray.length - 1; i >= 0; i--) {
                     if (checkInterruption("volume")) throw new InterruptedException();
@@ -226,6 +241,7 @@ public final class AnimationManager {
                 long start2 = System.currentTimeMillis();
                 while (System.currentTimeMillis() - start2 <= 730) {
                     if (checkInterruption("volume")) throw new InterruptedException();
+                    Thread.sleep(50);
                 }
             } catch (InterruptedException e) {
                 if (DEBUG) Log.d(TAG, "Exception while playing animation, interrupted | name: volume");
@@ -278,11 +294,21 @@ public final class AnimationManager {
                 } finally {
                     if (StatusManager.isAllLedActive()) {
                         if (DEBUG) Log.d(TAG, "All LED active, pause playing animation | name: " + name);
-                        while (StatusManager.isAllLedActive()) {}
+                        while (StatusManager.isAllLedActive()
+                                && StatusManager.isCallLedEnabled()) {
+                            try {
+                                Thread.sleep(50);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                break;
+                            }
+                        }
                     }
                 }
             }
-            updateLedFrame(new float[5]);
+            if (!StatusManager.isAllLedActive()) {
+                updateLedFrame(new float[5]);
+            }
             StatusManager.setCallLedActive(false);
             if (DEBUG) Log.d(TAG, "Done playing animation | name: " + name);
         });
