@@ -27,8 +27,6 @@ public final class Constants {
 
     public static Context CONTEXT;
 
-    private static String device = null;
-
     private static int brightness = -1;
     private static int brightnessMax = -1;
     private static int[] brightnessLevels = null;
@@ -66,13 +64,6 @@ public final class Constants {
         "com.google.android.dialer:phone_ongoing_call",
         "com.android.systemui:BAT"
     };
-
-    public static String getDevice() {
-        if (device == null)
-            device = ResourceUtils.getString("glyph_settings_device");
-
-        return device;
-    }
 
     public static boolean setBrightness(int b) {
         if (b > ResourceUtils.getInteger("glyph_settings_brightness_max"))
