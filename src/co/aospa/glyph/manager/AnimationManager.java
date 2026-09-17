@@ -16,6 +16,7 @@
 
 package co.aospa.glyph.manager;
 
+import android.os.SystemClock;
 import android.util.Log;
 
 import java.util.concurrent.CompletionException;
@@ -32,6 +33,9 @@ public final class AnimationManager {
 
     private static final String TAG = "GlyphAnimationManager";
     private static final boolean DEBUG = true;
+    private static final long NANOS_PER_SECOND = 1_000_000_000L;
+    private static final long POLL_SLICE_NANOS = 50_000_000L;
+    private static final int CONTENT_FRAME_RATE = 60;
 
     private static Future<?> submit(Runnable runnable) {
         ExecutorService executorService = Executors.newSingleThreadExecutor();
@@ -44,14 +48,29 @@ public final class AnimationManager {
         });
     }
 
-    // Polling callers re-check their own state after each short slice.
-    private static boolean sleepSlice() {
+    // Callers decide whether interruption aborts playback or only polling.
+    private static boolean sleep(long durationNanos) {
         try {
-            Thread.sleep(50);
+            Thread.sleep(durationNanos / 1_000_000L,
+                    (int) (durationNanos % 1_000_000L));
             return true;
         } catch (InterruptedException e) {
             return false;
         }
+    }
+
+    private static long paceFrame(long startNanos, long nextFrame)
+            throws InterruptedException {
+        long deadlineNanos = startNanos
+                + nextFrame * NANOS_PER_SECOND / CONTENT_FRAME_RATE;
+        long remainingNanos = deadlineNanos - SystemClock.elapsedRealtimeNanos();
+        if (remainingNanos > 0 && !sleep(remainingNanos)) {
+            throw new InterruptedException();
+        }
+        long elapsedNanos = Math.max(0,
+                SystemClock.elapsedRealtimeNanos() - startNanos);
+        long currentFrame = elapsedNanos * CONTENT_FRAME_RATE / NANOS_PER_SECOND;
+        return Math.max(nextFrame, currentFrame);
     }
 
     private static boolean check(String name, boolean wait) {
@@ -74,7 +93,7 @@ public final class AnimationManager {
                 StatusManager.setVolumeLedUpdate(true);
                 while (StatusManager.isVolumeLedUpdate()) {
                     if (System.currentTimeMillis() - start >= 2500) return false;
-                    if (!sleepSlice()) {
+                    if (!sleep(POLL_SLICE_NANOS)) {
                         Thread.currentThread().interrupt();
                         return false;
                     }
@@ -83,7 +102,7 @@ public final class AnimationManager {
                 if (DEBUG) Log.d(TAG, "There is already an animation playing, wait | name: " + name);
                 while (StatusManager.isAnimationActive()) {
                     if (System.currentTimeMillis() - start >= 2500) return false;
-                    if (!sleepSlice()) {
+                    if (!sleep(POLL_SLICE_NANOS)) {
                         Thread.currentThread().interrupt();
                         return false;
                     }
@@ -118,17 +137,16 @@ public final class AnimationManager {
 
             StatusManager.setAnimationActive(true);
 
-            long start = System.currentTimeMillis();
-
             try {
                 AnimationUtils.Animation animation = AnimationUtils.load(
                         name, AnimationUtils.Category.ANIMATION).join();
                 if (animation == null) return;
-                for (int i = 0; i < animation.getFrameCount(); i++) {
+                long startNanos = SystemClock.elapsedRealtimeNanos();
+                long frame = 0;
+                while (frame < animation.getFrameCount()) {
                     if (checkInterruption("csv")) throw new InterruptedException();
-                    updateLedFrame(animation.getFrame(i));
-                    long delay = 16666L - (System.currentTimeMillis() - start);
-                    Thread.sleep(delay/1000);
+                    updateLedFrame(animation.getFrame((int) frame));
+                    frame = paceFrame(startNanos, frame + 1);
                 }
             } catch (InterruptedException e) {
                 if (DEBUG) Log.d(TAG, "Exception while playing animation | name: " + name + " | exception: " + e);
@@ -168,7 +186,7 @@ public final class AnimationManager {
                 long start = System.currentTimeMillis();
                 while (System.currentTimeMillis() - start <= 2000) {
                     if (checkInterruption("charging")) throw new InterruptedException();
-                    if (!sleepSlice()) throw new InterruptedException();
+                    if (!sleep(POLL_SLICE_NANOS)) throw new InterruptedException();
                 }
                 for (int i = amount - 1; i >= 0; i--) {
                     if (checkInterruption("charging")) throw new InterruptedException();
@@ -179,7 +197,7 @@ public final class AnimationManager {
                 long start2 = System.currentTimeMillis();
                 while (System.currentTimeMillis() - start2 <= 730) {
                     if (checkInterruption("charging")) throw new InterruptedException();
-                    if (!sleepSlice()) throw new InterruptedException();
+                    if (!sleep(POLL_SLICE_NANOS)) throw new InterruptedException();
                 }
             } catch (InterruptedException e) {
                 if (DEBUG) Log.d(TAG, "Exception while playing animation, interrupted | name: charging");
@@ -229,7 +247,7 @@ public final class AnimationManager {
                 long start = System.currentTimeMillis();
                 while (System.currentTimeMillis() - start <= 1800) {
                     if (checkInterruption("volume")) throw new InterruptedException();
-                    if (!sleepSlice()) throw new InterruptedException();
+                    if (!sleep(POLL_SLICE_NANOS)) throw new InterruptedException();
                 }
                 for (int i = volumeArray.length - 1; i >= 0; i--) {
                     if (checkInterruption("volume")) throw new InterruptedException();
@@ -243,7 +261,7 @@ public final class AnimationManager {
                 long start2 = System.currentTimeMillis();
                 while (System.currentTimeMillis() - start2 <= 730) {
                     if (checkInterruption("volume")) throw new InterruptedException();
-                    if (!sleepSlice()) throw new InterruptedException();
+                    if (!sleep(POLL_SLICE_NANOS)) throw new InterruptedException();
                 }
             } catch (InterruptedException e) {
                 if (DEBUG) Log.d(TAG, "Exception while playing animation, interrupted | name: volume");
@@ -285,16 +303,18 @@ public final class AnimationManager {
                 return;
             }
 
-            long start = System.currentTimeMillis();
-
+            long startNanos = SystemClock.elapsedRealtimeNanos();
+            long frame = 0;
             while (StatusManager.isCallLedEnabled()) {
                 try {
-                    for (int i = 0; i < animation.getFrameCount(); i++) {
-                        if (checkInterruption("call")) throw new InterruptedException();
-                        updateLedFrame(animation.getFrame(i));
-                        long delay = 16666L - (System.currentTimeMillis() - start);
-                        Thread.sleep(delay/1000);
-                    }
+                    long elapsedNanos = Math.max(0,
+                            SystemClock.elapsedRealtimeNanos() - startNanos);
+                    frame = Math.max(frame,
+                            elapsedNanos * CONTENT_FRAME_RATE / NANOS_PER_SECOND);
+                    if (checkInterruption("call")) throw new InterruptedException();
+                    updateLedFrame(animation.getFrame(
+                            (int) (frame % animation.getFrameCount())));
+                    frame = paceFrame(startNanos, frame + 1);
                 } catch (InterruptedException e) {
                     if (DEBUG) Log.d(TAG, "Exception while playing animation | name: " + name + " | exception: " + e);
                 } finally {
@@ -302,10 +322,15 @@ public final class AnimationManager {
                         if (DEBUG) Log.d(TAG, "All LED active, pause playing animation | name: " + name);
                         while (StatusManager.isAllLedActive()
                                 && StatusManager.isCallLedEnabled()) {
-                            if (!sleepSlice()) {
+                            if (!sleep(POLL_SLICE_NANOS)) {
                                 Thread.currentThread().interrupt();
                                 break;
                             }
+                        }
+                        if (!StatusManager.isAllLedActive()
+                                && StatusManager.isCallLedEnabled()) {
+                            startNanos = SystemClock.elapsedRealtimeNanos();
+                            frame = 0;
                         }
                     }
                 }
