@@ -25,8 +25,6 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.util.Arrays;
-
 import co.aospa.glyph.utils.Constants;
 
 public final class FileUtils {
@@ -118,7 +116,12 @@ public final class FileUtils {
     }
 
     public static void writeFrameLed(int[] value) {
-        writeFrameLed(Arrays.toString(value).replaceAll("\\[|\\]", "").replace(", ", " "));
+        StringBuilder frame = new StringBuilder();
+        for (int i = 0; i < value.length; i++) {
+            if (i > 0) frame.append(' ');
+            frame.append(value[i]);
+        }
+        writeFrameLed(frame.toString());
     }
 
     public static void writeFrameLed(float[] value) {
