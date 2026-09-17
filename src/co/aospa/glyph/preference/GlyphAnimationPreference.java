@@ -16,62 +16,106 @@
 
 package co.aospa.glyph.preference;
 
-import android.app.Activity;
 import android.content.Context;
-import android.content.ContextWrapper;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.view.Choreographer;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ImageView;
+import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 
 import androidx.preference.Preference;
 import androidx.preference.PreferenceViewHolder;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Objects;
+import java.util.Set;
 
 import co.aospa.glyph.R;
+import co.aospa.glyph.utils.AnimationUtils;
 import co.aospa.glyph.utils.Constants;
 import co.aospa.glyph.utils.ResourceUtils;
 
 public class GlyphAnimationPreference extends Preference {
 
-    private final String TAG = "GlyphAnimationPreference";
-    private final boolean DEBUG = true;
-
-    private Activity mActivity;
+    private static final String TAG = "GlyphAnimationPreference";
+    private static final boolean DEBUG = true;
+    private static final long NANOS_PER_SECOND = 1_000_000_000L;
+    private static final int CONTENT_FRAME_RATE = 60;
+    private static final String PREVIEW_ZONE_MAP_RESOURCE_PREFIX =
+            "glyph_settings_animations_preview_zone_map_";
 
     private String animationName;
-    private boolean animationTerminated;
+    private boolean animationTerminated = true;
     private boolean animationPaused = true;
-    private int animationTimeBetween = 0;
+    private int animationTimeBetween;
     private String[] animationSlugs;
     private ImageView[] animationImgs;
+    private float[] mLastZoneValues;
+
+    private AnimationUtils.Animation mAnimation;
+    private int mLoadGeneration;
+    private int mLoadingGeneration = -1;
+    private long mAnimationStartNanos = -1;
+    private boolean mFrameCallbackPosted;
+    private int mPreviewZoneMapFrameWidth = -1;
+    private int[] mPreviewZoneMap;
+    private final Set<Integer> mLoggedInvalidPreviewZoneMaps = new HashSet<>();
 
     private View mRootView;
     private final View.OnClickListener mClickListener = v -> performClick(v);
+    private final Choreographer.FrameCallback mFrameCallback = this::doFrame;
+    private final ViewTreeObserver.OnWindowVisibilityChangeListener
+            mWindowVisibilityChangeListener = visibility -> updateCallbackState();
+    private final ViewTreeObserver.OnGlobalLayoutListener mGlobalLayoutListener =
+            this::updateCallbackState;
+    private final View.OnAttachStateChangeListener mAttachStateChangeListener =
+            new View.OnAttachStateChangeListener() {
+                @Override
+                public void onViewAttachedToWindow(View view) {
+                    ViewTreeObserver observer = view.getViewTreeObserver();
+                    observer.addOnWindowVisibilityChangeListener(
+                            mWindowVisibilityChangeListener);
+                    observer.addOnGlobalLayoutListener(mGlobalLayoutListener);
+                    updateCallbackState();
+                }
+
+                @Override
+                public void onViewDetachedFromWindow(View view) {
+                    mLoadGeneration++;
+                    mLoadingGeneration = -1;
+                    ViewTreeObserver observer = view.getViewTreeObserver();
+                    if (observer.isAlive()) {
+                        observer.removeOnWindowVisibilityChangeListener(
+                                mWindowVisibilityChangeListener);
+                        observer.removeOnGlobalLayoutListener(mGlobalLayoutListener);
+                    }
+                    removeFrameCallback();
+                }
+            };
 
     public GlyphAnimationPreference(Context context) {
         super(context);
-        setActivity(context);
         setLayout(R.layout.glyph_settings_preview);
     }
+
     public GlyphAnimationPreference(Context context, AttributeSet attrs) {
         super(context, attrs);
-        setActivity(context);
         setLayout(R.layout.glyph_settings_preview);
     }
+
     public GlyphAnimationPreference(Context context, AttributeSet attrs, int defStyleAttr) {
         super(context, attrs, defStyleAttr);
-        setActivity(context);
         setLayout(R.layout.glyph_settings_preview);
     }
-    public GlyphAnimationPreference(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+
+    public GlyphAnimationPreference(Context context, AttributeSet attrs, int defStyleAttr,
+            int defStyleRes) {
         super(context, attrs, defStyleAttr);
-        setActivity(context);
         setLayout(defStyleRes);
     }
 
@@ -79,24 +123,14 @@ public class GlyphAnimationPreference extends Preference {
         setLayoutResource(R.layout.glyph_settings_preview_frame);
         mRootView = LayoutInflater.from(getContext())
                 .inflate(layoutResource, null, false);
+        mRootView.addOnAttachStateChangeListener(mAttachStateChangeListener);
         setShouldDisableView(false);
-    }
-
-    private void setActivity(Context context) {
-        if (context instanceof ContextWrapper) {
-            if (context instanceof Activity) {
-                mActivity = (Activity) context;
-            } else {
-                setActivity(((ContextWrapper) context).getBaseContext());
-            }
-        }
     }
 
     @Override
     public void onBindViewHolder(PreferenceViewHolder holder) {
         holder.itemView.setOnClickListener(mClickListener);
 
-        final boolean selectable = isSelectable();
         holder.itemView.setFocusable(isSelectable());
         holder.itemView.setClickable(isSelectable());
 
@@ -124,18 +158,25 @@ public class GlyphAnimationPreference extends Preference {
     }
 
     private void startAnimation() {
+        animationTerminated = false;
         animationSlugs = ResourceUtils.getStringArray("glyph_settings_animations_slugs");
         animationImgs = new ImageView[animationSlugs.length];
+        mLastZoneValues = new float[animationSlugs.length];
+        Arrays.fill(mLastZoneValues, Float.NaN);
         for (int i = 0; i < animationSlugs.length; i++) {
             animationImgs[i] = (ImageView) mRootView.findViewById(
-                ResourceUtils.getIdentifier("preview_device_" + animationSlugs[i], "id"));
+                    ResourceUtils.getIdentifier("preview_device_" + animationSlugs[i], "id"));
         }
-        animationThread.start();
+        updateCallbackState();
     }
 
     private void stopAnimation() {
         animationTerminated = true;
-        animationThread.interrupt();
+        animationPaused = true;
+        mLoadGeneration++;
+        mAnimation = null;
+        removeFrameCallback();
+        clearGlyphs();
     }
 
     public void updateAnimation(boolean play) {
@@ -147,90 +188,192 @@ public class GlyphAnimationPreference extends Preference {
     }
 
     public void updateAnimation(boolean play, String name, int time) {
+        boolean animationChanged = !Objects.equals(animationName, name);
         animationTimeBetween = time;
         animationName = name;
         animationPaused = !play;
-        animationThread.interrupt();
+        mLoadGeneration++;
+        mAnimationStartNanos = -1;
+        if (animationChanged) {
+            mAnimation = null;
+        }
+        if (animationPaused) {
+            removeFrameCallback();
+            clearGlyphs();
+        } else {
+            updateCallbackState();
+        }
     }
 
-    Thread animationThread = new Thread() {
-        @Override
-        public void run() {
-            while (!animationTerminated) {
-                while (animationPaused) {}
-                if (DEBUG) Log.d(TAG, "Displaying animation | name: " + animationName);
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                        ResourceUtils.getAnimation(animationName)))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        long start = System.currentTimeMillis();
-                        line = line.replace(" ", "");
-                        line = line.endsWith(",") ? line.substring(0, line.length() - 1) : line;
-                        String[] split = line.split(",");
-                        if (Constants.getDevice().equals("phone1") && split.length == 5) { // Phone (1) pattern on Phone (1)
-                            mActivity.runOnUiThread(() -> {
-                                for (int i = 0; i < animationSlugs.length; i++) {
-                                    setGlyphsDrawable(animationImgs[i], Integer.parseInt(split[i]));
-                                }
-                            });
-                        } else if (Constants.getDevice().equals("phone2") && split.length == 5) { // Phone (1) pattern on Phone (2)
-                            mActivity.runOnUiThread(() -> {
-                                    setGlyphsDrawable(animationImgs[0], Integer.parseInt(split[0]));
-                                    setGlyphsDrawable(animationImgs[1], Integer.parseInt(split[0]));
-                                    setGlyphsDrawable(animationImgs[2], Integer.parseInt(split[1]));
-                                    setGlyphsDrawable(animationImgs[3], Integer.parseInt(split[2]));
-                                    setGlyphsDrawable(animationImgs[4], Integer.parseInt(split[2]));
-                                    setGlyphsDrawable(animationImgs[5], Integer.parseInt(split[2]));
-                                    setGlyphsDrawable(animationImgs[6], Integer.parseInt(split[2]));
-                                    setGlyphsDrawable(animationImgs[7], Integer.parseInt(split[2]));
-                                    setGlyphsDrawable(animationImgs[8], Integer.parseInt(split[2]));
-                                    setGlyphsDrawable(animationImgs[9], Integer.parseInt(split[3]));
-                                    setGlyphsDrawable(animationImgs[10], Integer.parseInt(split[4]));
-                            });
-                        } else if (Constants.getDevice().equals("phone2") && split.length == 33) { // Phone (2) pattern on Phone (2)
-                            mActivity.runOnUiThread(() -> {
-                                    setGlyphsDrawable(animationImgs[0], Integer.parseInt(split[0]));
-                                    setGlyphsDrawable(animationImgs[1], Integer.parseInt(split[1]));
-                                    setGlyphsDrawable(animationImgs[2], Integer.parseInt(split[2]));
-                                    setGlyphsDrawable(animationImgs[3], Integer.parseInt(split[3]));
-                                    setGlyphsDrawable(animationImgs[4], Integer.parseInt(split[19]));
-                                    setGlyphsDrawable(animationImgs[5], Integer.parseInt(split[20]));
-                                    setGlyphsDrawable(animationImgs[6], Integer.parseInt(split[21]));
-                                    setGlyphsDrawable(animationImgs[7], Integer.parseInt(split[22]));
-                                    setGlyphsDrawable(animationImgs[8], Integer.parseInt(split[23]));
-                                    setGlyphsDrawable(animationImgs[9], Integer.parseInt(split[25]));
-                                    setGlyphsDrawable(animationImgs[10], Integer.parseInt(split[24]));
-                            });
-                        } else {
-                            if (DEBUG) Log.d(TAG, "Animation line length mismatch | name: " + animationName + " | line: " + line);
-                            updateAnimation(false);
-                        }
-                        long delay = 16666L - (System.currentTimeMillis() - start);
-                        Thread.sleep(delay/1000);
+    private void updateCallbackState() {
+        if (!shouldRunAnimation()) {
+            removeFrameCallback();
+            return;
+        }
+        if (mAnimation == null) {
+            loadAnimation();
+            return;
+        }
+        if (!mFrameCallbackPosted) {
+            mFrameCallbackPosted = true;
+            Choreographer.getInstance().postFrameCallback(mFrameCallback);
+        }
+    }
+
+    private boolean shouldRunAnimation() {
+        return !animationTerminated && !animationPaused && animationName != null
+                && mRootView.isAttachedToWindow()
+                && mRootView.getWindowVisibility() == View.VISIBLE
+                && mRootView.isShown();
+    }
+
+    private void loadAnimation() {
+        int generation = mLoadGeneration;
+        if (mLoadingGeneration == generation) return;
+        mLoadingGeneration = generation;
+        String name = animationName;
+        if (DEBUG) Log.d(TAG, "Loading animation | name: " + name);
+        AnimationUtils.load(name, AnimationUtils.Category.ANIMATION)
+                .thenAccept(animation -> mRootView.post(() -> {
+                    if (generation != mLoadGeneration || animationTerminated
+                            || !Objects.equals(name, animationName)
+                            || !mRootView.isAttachedToWindow()) {
+                        return;
                     }
-                    Thread.sleep(animationTimeBetween);
-                } catch (Exception e) {
-                    if (DEBUG) Log.d(TAG, "Exception while displaying animation | name: " + animationName + " | exception: " + e);
-                } finally {
-                    if (animationPaused) {
-                        if (DEBUG) Log.d(TAG, "Pause displaying animation | name: " + animationName);
-                        mActivity.runOnUiThread(() -> {
-                            for (int i = 0; i < animationSlugs.length; i++) {
-                                setGlyphsDrawable(animationImgs[i], 0);
-                            }
-                        });
+                    mLoadingGeneration = -1;
+                    if (animation == null) {
+                        animationPaused = true;
+                        clearGlyphs();
+                        return;
                     }
-                }
+                    mAnimation = animation;
+                    mAnimationStartNanos = -1;
+                    updateCallbackState();
+                }));
+    }
+
+    private void doFrame(long frameTimeNanos) {
+        mFrameCallbackPosted = false;
+        if (!shouldRunAnimation() || mAnimation == null) return;
+
+        if (mAnimationStartNanos < 0) {
+            mAnimationStartNanos = frameTimeNanos;
+        }
+        long contentDurationNanos = mAnimation.getFrameCount()
+                * NANOS_PER_SECOND / CONTENT_FRAME_RATE;
+        long cycleDurationNanos = contentDurationNanos
+                + animationTimeBetween * 1_000_000L;
+        long cycleTimeNanos = (frameTimeNanos - mAnimationStartNanos)
+                % cycleDurationNanos;
+        double framePosition = cycleTimeNanos * CONTENT_FRAME_RATE
+                / (double) NANOS_PER_SECOND;
+        int frameIndex = cycleTimeNanos >= contentDurationNanos
+                ? mAnimation.getFrameCount() - 1
+                : (int) framePosition;
+        int nextFrameIndex = Math.min(frameIndex + 1, mAnimation.getFrameCount() - 1);
+        float frameFraction = cycleTimeNanos >= contentDurationNanos
+                ? 0f : (float) (framePosition - frameIndex);
+        if (!applyFrame(mAnimation.getFrame(frameIndex),
+                mAnimation.getFrame(nextFrameIndex), frameFraction)) {
+            animationPaused = true;
+            clearGlyphs();
+            return;
+        }
+        updateCallbackState();
+    }
+
+    private boolean applyFrame(int[] frame, int[] nextFrame, float fraction) {
+        if (!isPreviewFrameSupported(frame) || !isPreviewFrameSupported(nextFrame)) {
+            if (DEBUG) Log.d(TAG, "Animation frame length mismatch | name: "
+                    + animationName + " | lengths: " + frame.length + ", " + nextFrame.length);
+            return false;
+        }
+        int[] zoneMap = getPreviewZoneMap(frame.length);
+        int[] nextZoneMap = frame.length == nextFrame.length
+                ? zoneMap : getPreviewZoneMap(nextFrame.length);
+        if (zoneMap == null || nextZoneMap == null) return false;
+
+        for (int i = 0; i < animationSlugs.length; i++) {
+            int brightness = getZoneValue(frame, zoneMap, i);
+            int nextBrightness = getZoneValue(nextFrame, nextZoneMap, i);
+            float interpolatedBrightness = brightness
+                    + (nextBrightness - brightness) * fraction;
+            setZoneValue(i, interpolatedBrightness);
+        }
+        return true;
+    }
+
+    private boolean isPreviewFrameSupported(int[] frame) {
+        for (int patternLength : Constants.getSupportedAnimationPatternLengths()) {
+            if (frame.length == patternLength) return true;
+        }
+        return false;
+    }
+
+    private int[] getPreviewZoneMap(int frameWidth) {
+        if (mPreviewZoneMapFrameWidth == frameWidth) return mPreviewZoneMap;
+
+        mPreviewZoneMapFrameWidth = frameWidth;
+        mPreviewZoneMap = null;
+        int[] zoneMap = ResourceUtils.getIntArray(
+                PREVIEW_ZONE_MAP_RESOURCE_PREFIX + frameWidth);
+        if (zoneMap.length == 0) {
+            logInvalidPreviewZoneMap(frameWidth, "resource is missing");
+            return null;
+        }
+        if (zoneMap.length != animationSlugs.length) {
+            logInvalidPreviewZoneMap(frameWidth, "zone count is " + zoneMap.length
+                    + ", expected " + animationSlugs.length);
+            return null;
+        }
+        for (int channel : zoneMap) {
+            if (channel < 0 || channel >= frameWidth) {
+                logInvalidPreviewZoneMap(frameWidth, "channel " + channel
+                        + " is outside frame width " + frameWidth);
+                return null;
             }
         }
-        
-        private void setGlyphsDrawable(ImageView imageView, int brightness) {
-            if (brightness <= 0) {
-                imageView.setAlpha(0.3f);
-            } else {
-                float brightnessFactor = (float) (0.4 + 0.6 * (brightness / (double) Constants.getMaxBrightness()));
-                imageView.setAlpha(brightnessFactor);
-            }
+        mPreviewZoneMap = zoneMap;
+        return mPreviewZoneMap;
+    }
+
+    private void logInvalidPreviewZoneMap(int frameWidth, String reason) {
+        if (mLoggedInvalidPreviewZoneMaps.add(frameWidth)) {
+            Log.w(TAG, "Preview zone map is invalid | width: " + frameWidth
+                    + " | " + reason);
         }
-    };
+    }
+
+    private int getZoneValue(int[] frame, int[] zoneMap, int zone) {
+        return frame[zoneMap[zone]];
+    }
+
+    private void setZoneValue(int zone, float brightness) {
+        if (Float.compare(mLastZoneValues[zone], brightness) == 0) return;
+        mLastZoneValues[zone] = brightness;
+        setGlyphsDrawable(animationImgs[zone], brightness);
+    }
+
+    private void clearGlyphs() {
+        if (animationImgs == null) return;
+        for (int i = 0; i < animationImgs.length; i++) {
+            setZoneValue(i, 0);
+        }
+    }
+
+    private void removeFrameCallback() {
+        if (!mFrameCallbackPosted) return;
+        Choreographer.getInstance().removeFrameCallback(mFrameCallback);
+        mFrameCallbackPosted = false;
+    }
+
+    private void setGlyphsDrawable(ImageView imageView, float brightness) {
+        if (brightness <= 0) {
+            imageView.setAlpha(0.3f);
+        } else {
+            float brightnessFactor = (float) (0.4 + 0.6
+                    * (brightness / (double) Constants.getMaxBrightness()));
+            imageView.setAlpha(brightnessFactor);
+        }
+    }
 }

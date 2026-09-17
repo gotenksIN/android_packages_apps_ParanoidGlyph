@@ -27,6 +27,13 @@
     <integer-array name="glyph_settings_animations_supported_pattern_lengths" translatable="false">
         <item>5</item>
     </integer-array>
+    <integer-array name="glyph_settings_animations_preview_zone_map_5" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+    </integer-array>
 
     <!-- Battery Animations -->
     <bool name="glyph_settings_battery_dot" translatable="false">true</bool>

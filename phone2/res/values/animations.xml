@@ -34,6 +34,32 @@
         <item>5</item>
         <item>33</item>
     </integer-array>
+    <integer-array name="glyph_settings_animations_preview_zone_map_5" translatable="false">
+        <item>0</item>
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>2</item>
+        <item>2</item>
+        <item>2</item>
+        <item>2</item>
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+    </integer-array>
+    <integer-array name="glyph_settings_animations_preview_zone_map_33" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>19</item>
+        <item>20</item>
+        <item>21</item>
+        <item>22</item>
+        <item>23</item>
+        <item>25</item>
+        <item>24</item>
+    </integer-array>
 
     <!-- Battery Animations -->
     <bool name="glyph_settings_battery_dot" translatable="false">true</bool>
