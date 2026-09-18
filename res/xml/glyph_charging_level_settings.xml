@@ -12,7 +12,7 @@
         settings:lottie_rawRes="@raw/glyph_settings_charging_level_preview" />
 
     <com.android.settingslib.widget.MainSwitchPreference
-        android:defaultValue="true"
+        android:defaultValue="false"
         android:key="glyph_settings_charging_level"
         android:title="@string/glyph_settings_charging_level_title" />
 

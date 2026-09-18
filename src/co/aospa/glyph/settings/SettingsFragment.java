@@ -53,9 +53,9 @@ public class SettingsFragment extends SettingsBasePreferenceFragment implements 
 
     @Override
     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
-        addPreferencesFromResource(R.xml.glyph_settings);
-
         boolean glyphEnabled = SettingsManager.isGlyphEnabled();
+
+        addPreferencesFromResource(R.xml.glyph_settings);
 
         MainSwitchPreference switchBar = findPreference(Constants.GLYPH_ENABLE);
         switchBar.setOnPreferenceChangeListener(this);

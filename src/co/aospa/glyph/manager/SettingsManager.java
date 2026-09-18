@@ -17,6 +17,7 @@
 package co.aospa.glyph.manager;
 
 import android.content.SharedPreferences;
+import android.provider.Settings;
 import android.util.Log;
 
 import androidx.preference.PreferenceManager;
@@ -39,12 +40,23 @@ public final class SettingsManager {
         return PreferenceManager.getDefaultSharedPreferences(Constants.CONTEXT);
     }
 
+    private static boolean getMigratedSecureBoolean(String key, boolean defaultValue) {
+        SharedPreferences preferences = getPreferences();
+        if (preferences.contains(key)) {
+            return preferences.getBoolean(key, defaultValue);
+        }
+        boolean value = Settings.Secure.getInt(Constants.CONTEXT.getContentResolver(), key,
+                defaultValue ? 1 : 0) != 0;
+        preferences.edit().putBoolean(key, value).commit();
+        return value;
+    }
+
     public static boolean enableGlyph(boolean enable) {
         return getPreferences().edit().putBoolean(Constants.GLYPH_ENABLE, enable).commit();
     }
 
     public static boolean isGlyphEnabled() {
-        return getPreferences().getBoolean(Constants.GLYPH_ENABLE, true);
+        return getMigratedSecureBoolean(Constants.GLYPH_ENABLE, true);
     }
 
     public static boolean isGlyphFlipEnabled() {
@@ -74,7 +86,7 @@ public final class SettingsManager {
     }
 
     public static boolean isGlyphCallEnabled() {
-        return getPreferences().getBoolean(Constants.GLYPH_CALL_ENABLE, true) && isGlyphEnabled();
+        return getMigratedSecureBoolean(Constants.GLYPH_CALL_ENABLE, true) && isGlyphEnabled();
     }
 
     public static boolean setGlyphCallEnabled(boolean enable) {
@@ -97,7 +109,7 @@ public final class SettingsManager {
     }
 
     public static boolean isGlyphNotifsEnabled() {
-        return getPreferences().getBoolean(Constants.GLYPH_NOTIFS_ENABLE, true) && isGlyphEnabled();
+        return getMigratedSecureBoolean(Constants.GLYPH_NOTIFS_ENABLE, true) && isGlyphEnabled();
     }
 
     public static boolean setGlyphNotifsEnabled(boolean enable) {
