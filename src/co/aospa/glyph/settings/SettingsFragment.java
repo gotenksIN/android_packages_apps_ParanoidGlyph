@@ -126,6 +126,7 @@ public class SettingsFragment extends SettingsBasePreferenceFragment implements 
         if (preferenceKey.equals(Constants.GLYPH_ENABLE)) {
             boolean isChecked = (Boolean) newValue;
             SettingsManager.enableGlyph(isChecked);
+            updateFeaturePreferences();
 
             mFlipPreference.setEnabled(isChecked && !mMusicVisualizerPreference.isChecked());
             mFlipPreference.setSwitchEnabled(isChecked && !mMusicVisualizerPreference.isChecked());
@@ -184,6 +185,10 @@ public class SettingsFragment extends SettingsBasePreferenceFragment implements 
     @Override
     public void onResume() {
         super.onResume();
+        updateFeaturePreferences();
+    }
+
+    private void updateFeaturePreferences() {
         mFlipPreference.setChecked(SettingsManager.isGlyphFlipEnabled());
         mChargingLevelPreference.setChecked(SettingsManager.isGlyphChargingEnabled());
         mChargingPowersharePreference.setChecked(SettingsManager.isGlyphPowershareEnabled());
