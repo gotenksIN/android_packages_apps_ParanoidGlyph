@@ -35,20 +35,26 @@ public final class SettingsManager {
 
     private static final String TAG = "GlyphSettingsManager";
     private static final boolean DEBUG = true;
+    private static final String SECURE_SETTINGS_MIGRATED = "secure_settings_migrated";
 
-    private static SharedPreferences getPreferences() {
-        return PreferenceManager.getDefaultSharedPreferences(Constants.CONTEXT);
+    private static synchronized SharedPreferences getPreferences() {
+        SharedPreferences preferences =
+                PreferenceManager.getDefaultSharedPreferences(Constants.CONTEXT);
+        if (!preferences.getBoolean(SECURE_SETTINGS_MIGRATED, false)) {
+            SharedPreferences.Editor editor = preferences.edit();
+            migrateSecureBoolean(editor, Constants.GLYPH_ENABLE, true);
+            migrateSecureBoolean(editor, Constants.GLYPH_CALL_ENABLE, true);
+            migrateSecureBoolean(editor, Constants.GLYPH_NOTIFS_ENABLE, true);
+            editor.putBoolean(SECURE_SETTINGS_MIGRATED, true).commit();
+        }
+        return preferences;
     }
 
-    private static boolean getMigratedSecureBoolean(String key, boolean defaultValue) {
-        SharedPreferences preferences = getPreferences();
-        if (preferences.contains(key)) {
-            return preferences.getBoolean(key, defaultValue);
-        }
+    private static void migrateSecureBoolean(SharedPreferences.Editor editor, String key,
+            boolean defaultValue) {
         boolean value = Settings.Secure.getInt(Constants.CONTEXT.getContentResolver(), key,
                 defaultValue ? 1 : 0) != 0;
-        preferences.edit().putBoolean(key, value).commit();
-        return value;
+        editor.putBoolean(key, value);
     }
 
     public static boolean enableGlyph(boolean enable) {
@@ -56,11 +62,11 @@ public final class SettingsManager {
     }
 
     public static boolean isGlyphEnabled() {
-        return getMigratedSecureBoolean(Constants.GLYPH_ENABLE, true);
+        return getPreferences().getBoolean(Constants.GLYPH_ENABLE, true);
     }
 
     public static boolean isGlyphFlipEnabled() {
-        return getPreferences().getBoolean(Constants.GLYPH_FLIP_ENABLE, false) && isGlyphEnabled();
+        return getPreferences().getBoolean(Constants.GLYPH_FLIP_ENABLE, true) && isGlyphEnabled();
     }
 
     public static int getGlyphBrightness() {
@@ -75,18 +81,18 @@ public final class SettingsManager {
     }
 
     public static boolean isGlyphChargingEnabled() {
-        return getPreferences().getBoolean(Constants.GLYPH_CHARGING_LEVEL_ENABLE, false)
+        return getPreferences().getBoolean(Constants.GLYPH_CHARGING_LEVEL_ENABLE, true)
                 && isGlyphEnabled();
     }
 
     public static boolean isGlyphPowershareEnabled() {
         return Constants.isPowershareSupported()
-                && getPreferences().getBoolean(Constants.GLYPH_CHARGING_POWERSHARE_ENABLE, false)
+                && getPreferences().getBoolean(Constants.GLYPH_CHARGING_POWERSHARE_ENABLE, true)
                 && isGlyphEnabled();
     }
 
     public static boolean isGlyphCallEnabled() {
-        return getMigratedSecureBoolean(Constants.GLYPH_CALL_ENABLE, true) && isGlyphEnabled();
+        return getPreferences().getBoolean(Constants.GLYPH_CALL_ENABLE, true) && isGlyphEnabled();
     }
 
     public static boolean setGlyphCallEnabled(boolean enable) {
@@ -104,12 +110,12 @@ public final class SettingsManager {
     }
 
     public static boolean isGlyphVolumeLevelEnabled() {
-        return getPreferences().getBoolean(Constants.GLYPH_VOLUME_LEVEL_ENABLE, false)
+        return getPreferences().getBoolean(Constants.GLYPH_VOLUME_LEVEL_ENABLE, true)
                 && isGlyphEnabled();
     }
 
     public static boolean isGlyphNotifsEnabled() {
-        return getMigratedSecureBoolean(Constants.GLYPH_NOTIFS_ENABLE, true) && isGlyphEnabled();
+        return getPreferences().getBoolean(Constants.GLYPH_NOTIFS_ENABLE, true) && isGlyphEnabled();
     }
 
     public static boolean setGlyphNotifsEnabled(boolean enable) {

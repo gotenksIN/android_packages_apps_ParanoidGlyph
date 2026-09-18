@@ -12,7 +12,7 @@
         settings:lottie_rawRes="@raw/glyph_settings_charging_powershare_preview" />
 
     <com.android.settingslib.widget.MainSwitchPreference
-        android:defaultValue="false"
+        android:defaultValue="true"
         android:key="glyph_settings_charging_powershare"
         android:title="@string/glyph_settings_charging_powershare_title" />
 
